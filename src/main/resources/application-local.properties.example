@@ -1,0 +1,3 @@
+# 复制本文件为 application-local.properties，填入你的真实数据库配置
+spring.datasource.username=root
+spring.datasource.password=你的数据库密码

@@ -23,3 +23,8 @@
 /dist/
 /nbdist/
 /.nb-gradle/
+### 本地配置（含密码，不入库）###
+application-local.properties
+
+### 大文件 ###
+*.zip

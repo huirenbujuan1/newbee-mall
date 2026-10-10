@@ -244,6 +244,24 @@
     margin-top: 15px;
 }
 
+#content #sub_banner .sub_banner_header h2 {
+    font-size: 16px;
+    color: #333;
+    margin: 0;
+    line-height: 1;
+}
+
+#content #sub_banner .sub_banner_header .more {
+    font-size: 12px;
+    color: #999;
+    text-decoration: none;
+    line-height: 1;
+}
+
+#content #sub_banner .sub_banner_header .more:hover {
+    color: #1baeae;
+}
+
 #content #sub_banner .selector {
     width: 234px;
     height: 100%;
