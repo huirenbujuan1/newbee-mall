@@ -404,24 +404,27 @@ public class NewBeeMallOrderServiceImpl implements NewBeeMallOrderService {
 
     @Override
     public String paySuccess(String orderNo, int payType) {
-        NewBeeMallOrder newBeeMallOrder = newBeeMallOrderMapper.selectByOrderNo(orderNo);
-        if (newBeeMallOrder != null) {
-            //订单状态判断 非待支付状态下不进行修改操作
-            if (newBeeMallOrder.getOrderStatus().intValue() != NewBeeMallOrderStatusEnum.ORDER_PRE_PAY.getOrderStatus()) {
-                return ServiceResultEnum.ORDER_STATUS_ERROR.getResult();
-            }
-            newBeeMallOrder.setOrderStatus((byte) NewBeeMallOrderStatusEnum.ORDER_PAID.getOrderStatus());
-            newBeeMallOrder.setPayType((byte) payType);
-            newBeeMallOrder.setPayStatus((byte) PayStatusEnum.PAY_SUCCESS.getPayStatus());
-            newBeeMallOrder.setPayTime(new Date());
-            newBeeMallOrder.setUpdateTime(new Date());
-            if (newBeeMallOrderMapper.updateByPrimaryKeySelective(newBeeMallOrder) > 0) {
-                return ServiceResultEnum.SUCCESS.getResult();
-            } else {
-                return ServiceResultEnum.DB_ERROR.getResult();
-            }
+        // 组装要写入的新状态：待支付 -> 已支付
+        NewBeeMallOrder updateRecord = new NewBeeMallOrder();
+        updateRecord.setOrderNo(orderNo);
+        updateRecord.setOrderStatus((byte) NewBeeMallOrderStatusEnum.ORDER_PAID.getOrderStatus());
+        updateRecord.setPayType((byte) payType);
+        updateRecord.setPayStatus((byte) PayStatusEnum.PAY_SUCCESS.getPayStatus());
+        updateRecord.setPayTime(new Date());
+        updateRecord.setUpdateTime(new Date());
+
+        // 原子更新：把「当前必须还是待支付」作为 WHERE 条件交给数据库，
+        // 由影响行数判断是否抢到，避免「先查后改」在并发下重复支付（如支付回调重发、用户重复点击）
+        int updatedRows = newBeeMallOrderMapper.updateOrderStatusByOrderNo(
+                updateRecord, NewBeeMallOrderStatusEnum.ORDER_PRE_PAY.getOrderStatus());
+        if (updatedRows > 0) {
+            return ServiceResultEnum.SUCCESS.getResult();
         }
-        return ServiceResultEnum.ORDER_NOT_EXIST_ERROR.getResult();
+        // 一行都没更新到：要么订单不存在，要么状态已被其他请求改变
+        // 仅在失败路径上多查一次以区分错误信息（selectByOrderNo 已走唯一索引）
+        return newBeeMallOrderMapper.selectByOrderNo(orderNo) == null
+                ? ServiceResultEnum.ORDER_NOT_EXIST_ERROR.getResult()
+                : ServiceResultEnum.ORDER_STATUS_ERROR.getResult();
     }
 
     @Override

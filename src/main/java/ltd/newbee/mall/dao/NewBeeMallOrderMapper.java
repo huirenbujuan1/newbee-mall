@@ -29,6 +29,19 @@ public interface NewBeeMallOrderMapper {
 
     int updateByPrimaryKey(NewBeeMallOrder record);
 
+    /**
+     * 按订单号做「带当前状态校验」的原子更新，用于并发场景下的订单状态流转。
+     * <p>
+     * 只有数据库中的当前状态等于 expectedOrderStatus 时才会真正更新，
+     * 调用方根据返回的影响行数判断结果（0 表示订单不存在，或状态已被其他请求改变）。
+     *
+     * @param record              要写入的新值；orderNo 用于定位，orderStatus 为更新后的状态
+     * @param expectedOrderStatus 期望的当前状态
+     * @return 影响行数
+     */
+    int updateOrderStatusByOrderNo(@Param("record") NewBeeMallOrder record,
+                                   @Param("expectedOrderStatus") int expectedOrderStatus);
+
     List<NewBeeMallOrder> findNewBeeMallOrderList(PageQueryUtil pageUtil);
 
     int getTotalNewBeeMallOrders(PageQueryUtil pageUtil);

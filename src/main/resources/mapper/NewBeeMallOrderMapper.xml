@@ -226,6 +226,30 @@
                  open="(" separator="," close=")">#{item}
         </foreach>
     </update>
+    <!-- 按订单号 + 期望状态做原子更新：把「当前状态必须还是旧值」写进 WHERE，由影响行数判断是否抢到 -->
+    <update id="updateOrderStatusByOrderNo">
+        update tb_newbee_mall_order
+        <set>
+            <if test="record.orderStatus != null">
+                order_status = #{record.orderStatus},
+            </if>
+            <if test="record.payType != null">
+                pay_type = #{record.payType},
+            </if>
+            <if test="record.payStatus != null">
+                pay_status = #{record.payStatus},
+            </if>
+            <if test="record.payTime != null">
+                pay_time = #{record.payTime},
+            </if>
+            <if test="record.updateTime != null">
+                update_time = #{record.updateTime},
+            </if>
+        </set>
+        where order_no = #{record.orderNo}
+        and order_status = #{expectedOrderStatus}
+        and is_deleted = 0
+    </update>
     <update id="updateByPrimaryKeySelective" parameterType="ltd.newbee.mall.entity.NewBeeMallOrder">
         update tb_newbee_mall_order
         <set>
