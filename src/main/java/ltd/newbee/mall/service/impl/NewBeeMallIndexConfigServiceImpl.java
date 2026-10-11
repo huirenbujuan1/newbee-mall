@@ -8,6 +8,8 @@
  */
 package ltd.newbee.mall.service.impl;
 
+import ltd.newbee.mall.common.Constants;
+import ltd.newbee.mall.common.IndexConfigTypeEnum;
 import ltd.newbee.mall.common.ServiceResultEnum;
 import ltd.newbee.mall.controller.vo.NewBeeMallIndexConfigGoodsVO;
 import ltd.newbee.mall.dao.IndexConfigMapper;
@@ -18,6 +20,7 @@ import ltd.newbee.mall.service.NewBeeMallIndexConfigService;
 import ltd.newbee.mall.util.BeanUtil;
 import ltd.newbee.mall.util.PageQueryUtil;
 import ltd.newbee.mall.util.PageResult;
+import ltd.newbee.mall.util.RedisCacheUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
@@ -30,11 +33,19 @@ import java.util.stream.Collectors;
 @Service
 public class NewBeeMallIndexConfigServiceImpl implements NewBeeMallIndexConfigService {
 
+    /**
+     * 首页商品位（热销/新品/推荐）缓存 key 前缀，完整 key 形如 newbee:index:goods:3:4
+     */
+    private static final String INDEX_GOODS_CACHE_PREFIX = "newbee:index:goods:";
+
     @Autowired
     private IndexConfigMapper indexConfigMapper;
 
     @Autowired
     private NewBeeMallGoodsMapper goodsMapper;
+
+    @Autowired
+    private RedisCacheUtil redisCacheUtil;
 
     @Override
     public PageResult getConfigsPage(PageQueryUtil pageUtil) {
@@ -53,6 +64,7 @@ public class NewBeeMallIndexConfigServiceImpl implements NewBeeMallIndexConfigSe
             return ServiceResultEnum.SAME_INDEX_CONFIG_EXIST.getResult();
         }
         if (indexConfigMapper.insertSelective(indexConfig) > 0) {
+            evictIndexGoodsCache();
             return ServiceResultEnum.SUCCESS.getResult();
         }
         return ServiceResultEnum.DB_ERROR.getResult();
@@ -74,6 +86,7 @@ public class NewBeeMallIndexConfigServiceImpl implements NewBeeMallIndexConfigSe
         }
         indexConfig.setUpdateTime(new Date());
         if (indexConfigMapper.updateByPrimaryKeySelective(indexConfig) > 0) {
+            evictIndexGoodsCache();
             return ServiceResultEnum.SUCCESS.getResult();
         }
         return ServiceResultEnum.DB_ERROR.getResult();
@@ -86,6 +99,13 @@ public class NewBeeMallIndexConfigServiceImpl implements NewBeeMallIndexConfigSe
 
     @Override
     public List<NewBeeMallIndexConfigGoodsVO> getConfigGoodsesForIndex(int configType, int number) {
+        String cacheKey = INDEX_GOODS_CACHE_PREFIX + configType + ":" + number;
+        // 1. 先读缓存，命中直接返回（省掉「查配置 + 查商品」这 2 次数据库查询）
+        List<NewBeeMallIndexConfigGoodsVO> cached = redisCacheUtil.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+        // 2. 缓存没命中，回源查数据库（原逻辑不变）
         List<NewBeeMallIndexConfigGoodsVO> newBeeMallIndexConfigGoodsVOS = new ArrayList<>(number);
         List<IndexConfig> indexConfigs = indexConfigMapper.findIndexConfigsByTypeAndNum(configType, number);
         if (!CollectionUtils.isEmpty(indexConfigs)) {
@@ -107,6 +127,8 @@ public class NewBeeMallIndexConfigServiceImpl implements NewBeeMallIndexConfigSe
                 }
             }
         }
+        // 3. 写回缓存，下次请求直接命中
+        redisCacheUtil.set(cacheKey, newBeeMallIndexConfigGoodsVOS);
         return newBeeMallIndexConfigGoodsVOS;
     }
 
@@ -116,6 +138,22 @@ public class NewBeeMallIndexConfigServiceImpl implements NewBeeMallIndexConfigSe
             return false;
         }
         //删除数据
-        return indexConfigMapper.deleteBatch(ids) > 0;
+        boolean deleted = indexConfigMapper.deleteBatch(ids) > 0;
+        if (deleted) {
+            evictIndexGoodsCache();
+        }
+        return deleted;
+    }
+
+    /**
+     * 首页商品配置变更后删除三个商品位的缓存，下次访问自动重建。
+     * <p>
+     * 这里按「已知的 3 个配置类型 + 数量」精确删除，而不是用 keys 通配符扫一遍再删——
+     * Redis 的 keys 命令会阻塞单线程扫描全库，生产环境应当避免使用。
+     */
+    private void evictIndexGoodsCache() {
+        redisCacheUtil.delete(INDEX_GOODS_CACHE_PREFIX + IndexConfigTypeEnum.INDEX_GOODS_HOT.getType() + ":" + Constants.INDEX_GOODS_HOT_NUMBER);
+        redisCacheUtil.delete(INDEX_GOODS_CACHE_PREFIX + IndexConfigTypeEnum.INDEX_GOODS_NEW.getType() + ":" + Constants.INDEX_GOODS_NEW_NUMBER);
+        redisCacheUtil.delete(INDEX_GOODS_CACHE_PREFIX + IndexConfigTypeEnum.INDEX_GOODS_RECOMMOND.getType() + ":" + Constants.INDEX_GOODS_RECOMMOND_NUMBER);
     }
 }

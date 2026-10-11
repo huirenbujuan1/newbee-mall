@@ -21,6 +21,7 @@ import ltd.newbee.mall.service.NewBeeMallCategoryService;
 import ltd.newbee.mall.util.BeanUtil;
 import ltd.newbee.mall.util.PageQueryUtil;
 import ltd.newbee.mall.util.PageResult;
+import ltd.newbee.mall.util.RedisCacheUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
@@ -33,8 +34,16 @@ import static java.util.stream.Collectors.groupingBy;
 @Service
 public class NewBeeMallCategoryServiceImpl implements NewBeeMallCategoryService {
 
+    /**
+     * 首页分类（三级树）的缓存 key
+     */
+    private static final String INDEX_CATEGORIES_CACHE_KEY = "newbee:index:categories";
+
     @Autowired
     private GoodsCategoryMapper goodsCategoryMapper;
+
+    @Autowired
+    private RedisCacheUtil redisCacheUtil;
 
     @Override
     public PageResult getCategorisPage(PageQueryUtil pageUtil) {
@@ -51,6 +60,7 @@ public class NewBeeMallCategoryServiceImpl implements NewBeeMallCategoryService 
             return ServiceResultEnum.SAME_CATEGORY_EXIST.getResult();
         }
         if (goodsCategoryMapper.insertSelective(goodsCategory) > 0) {
+            evictIndexCategoriesCache();
             return ServiceResultEnum.SUCCESS.getResult();
         }
         return ServiceResultEnum.DB_ERROR.getResult();
@@ -69,6 +79,7 @@ public class NewBeeMallCategoryServiceImpl implements NewBeeMallCategoryService 
         }
         goodsCategory.setUpdateTime(new Date());
         if (goodsCategoryMapper.updateByPrimaryKeySelective(goodsCategory) > 0) {
+            evictIndexCategoriesCache();
             return ServiceResultEnum.SUCCESS.getResult();
         }
         return ServiceResultEnum.DB_ERROR.getResult();
@@ -85,11 +96,21 @@ public class NewBeeMallCategoryServiceImpl implements NewBeeMallCategoryService 
             return false;
         }
         //删除分类数据
-        return goodsCategoryMapper.deleteBatch(ids) > 0;
+        boolean deleted = goodsCategoryMapper.deleteBatch(ids) > 0;
+        if (deleted) {
+            evictIndexCategoriesCache();
+        }
+        return deleted;
     }
 
     @Override
     public List<NewBeeMallIndexCategoryVO> getCategoriesForIndex() {
+        // 1. 先读缓存，命中直接返回（省掉构建三级分类树的 3 次数据库查询）
+        List<NewBeeMallIndexCategoryVO> cached = redisCacheUtil.get(INDEX_CATEGORIES_CACHE_KEY);
+        if (cached != null) {
+            return cached;
+        }
+        // 2. 缓存没命中，回源查数据库并组装三级分类树（原逻辑不变）
         List<NewBeeMallIndexCategoryVO> newBeeMallIndexCategoryVOS = new ArrayList<>();
         //获取一级分类的固定数量的数据
         List<GoodsCategory> firstLevelCategories = goodsCategoryMapper.selectByLevelAndParentIdsAndNumber(Collections.singletonList(0L), NewBeeMallCategoryLevelEnum.LEVEL_ONE.getLevel(), Constants.INDEX_CATEGORY_NUMBER);
@@ -135,10 +156,19 @@ public class NewBeeMallCategoryServiceImpl implements NewBeeMallCategoryService 
                     }
                 }
             }
+            // 3. 写回缓存，下次请求直接命中
+            redisCacheUtil.set(INDEX_CATEGORIES_CACHE_KEY, newBeeMallIndexCategoryVOS);
             return newBeeMallIndexCategoryVOS;
         } else {
             return null;
         }
+    }
+
+    /**
+     * 分类数据变更后删除首页缓存，下次访问自动重建。
+     */
+    private void evictIndexCategoriesCache() {
+        redisCacheUtil.delete(INDEX_CATEGORIES_CACHE_KEY);
     }
 
     @Override
